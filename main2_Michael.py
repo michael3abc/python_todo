@@ -405,34 +405,35 @@ class optimize(Scheduler):
         self.best_schedule = None  # 儲存最佳行程
         self.min_fatigue = float('inf')  # 初始化最小疲勞值為正無窮大
 
-    def minimize_total_fatigue(self):
-        """
-        使用網格搜索法遍歷所有可能的排程組合，找到疲勞值最小的方案。
-        """
-        import itertools
-        all_combinations = itertools.permutations(self.tasks)  # 所有任務排列組合
-        for combination in all_combinations:
-            # 使用當前排列的順序生成行程
-            self.tasks = list(combination)
-            self.schedule = defaultdict(list)  # 重置行程表
-            self.assign_fixed_tasks()
-            self.assign_general_tasks()
-
-            # 計算疲勞值
-            fatigue = self.calculate_fatigue()
-
-            # 更新最佳結果
-            if fatigue < self.min_fatigue:
-                self.min_fatigue = fatigue
-                self.best_schedule = self.schedule
-
-            # 基於最佳結果生成 DataFrame
-        if self.best_schedule:
-            self.best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
-        else:
-            self.best_schedule_df = pd.DataFrame()
-
-        return self.best_schedule_df, self.min_fatigue
+    # def minimize_total_fatigue(self):
+    #     """
+    #     使用網格搜索法遍歷所有可能的排程組合，找到疲勞值最小的方案。
+    #     """
+    #     import itertools
+    #     all_combinations = itertools.permutations(self.tasks)  # 所有任務排列組合
+    #     for combination in all_combinations:
+    #         # 使用當前排列的順序生成行程
+    #         self.tasks = list(combination)
+    #         self.schedule = defaultdict(list)  # 重置行程表
+    #         self.assign_fixed_tasks()
+    #         self.assign_general_tasks()
+    #
+    #         # 計算疲勞值
+    #         fatigue = self.calculate_fatigue()
+    #
+    #         # 更新最佳結果
+    #         if fatigue < self.min_fatigue:
+    #             self.min_fatigue = fatigue
+    #             self.best_schedule = self.schedule
+    #
+    #         # 基於最佳結果生成 DataFrame
+    #     if self.best_schedule:
+    #         self.best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
+    #     else:
+    #         self.best_schedule_df = pd.DataFrame()
+    #     best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
+    #     return best_schedule_df, self.min_fatigue
+        # return self.best_schedule_df, self.min_fatigue
 
         # for combination in all_combinations:
         #     # 使用當前排列的順序生成行程
@@ -449,9 +450,40 @@ class optimize(Scheduler):
         #
         # self.best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
         # return self.best_schedule_df, self.min_fatigue
+    def minimize_total_fatigue(self):
+        """
+        遍歷任務排列組合，找到疲勞值最小的最佳行程表。
+        """
+        import itertools
 
+        if not self.tasks:
+            return None, 0  # 沒有任務時直接返回
 
+        all_combinations = itertools.permutations(self.tasks)
 
+        for combination in all_combinations:
+            # 重置行程表
+            self.schedule = defaultdict(list)
+            self.available_hours = {
+                day: list(range(9, 17)) for day in
+                ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            }
+
+            # 更新任務排序並分配
+            self.tasks = list(combination)
+            self.assign_fixed_tasks()
+            self.assign_general_tasks()
+
+            # 計算疲勞值
+            fatigue = self.calculate_fatigue()
+
+            if fatigue < self.min_fatigue:
+                self.min_fatigue = fatigue
+                self.best_schedule = self.schedule.copy()
+
+        # 基於最佳結果生成行程表
+        best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
+        return best_schedule_df, self.min_fatigue
 
 
 #region menu_dict區
@@ -737,6 +769,7 @@ def main():
 
         elif first_input == "4":
             best_schedule, min_fatigue = scheduler.minimize_total_fatigue()
+
             if best_schedule is not None:
                 print("\nOptimized Schedule:")
                 print(tabulate(best_schedule, headers="keys", tablefmt="fancy_grid"))
