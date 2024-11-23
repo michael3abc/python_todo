@@ -1,5 +1,9 @@
 #region general
 import time
+import pandas as pd
+from tabulate import tabulate
+from collections import defaultdict
+
 type_check_dictionary={"int": int, "float": float, "str": str, "bool": bool}
 def type_checker(value):
     if isinstance(value, int):
@@ -160,11 +164,49 @@ class TaskSet:
     def __init__(self):
         self.task_list=[]
 
-    def add_task(self,task):
-        task.ID=len(self.task_list)
-        self.task_list.append(task)
-        
-        return
+    # def add_task(self,task):
+    #     task.ID=len(self.task_list)
+    #     self.task_list.append(task)
+    #
+    #     return
+    def add_task(self, name, difficulty, time, fixed_time=None, dependencies=[]):
+        """
+        新增一個任務到系統。
+        :param name: 任務名稱 (str)
+        :param difficulty: 任務難度 (int)
+        :param time: 任務所需時間 (float)
+        :param fixed_time: 固定時間 (tuple) e.g., ("Monday", 9) 或 None
+        :param dependencies: 前置任務列表 (list) e.g., ["task_1"]
+        """
+        task = {
+            "name": name,
+            "difficulty": difficulty,
+            "time": time,
+            "fixed_time": fixed_time,
+            "dependencies": dependencies,
+        }
+        self.tasks.append(task)
+
+    # def add_task(scheduler):
+    #     print("Enter task details:")
+    #     name = input("Task name: ")
+    #     difficulty = int(input("Difficulty (int): "))
+    #     time = float(input("Time required (hours): "))
+    #     fixed = input("Fixed time? (y/n): ").strip().lower() == "y"
+    #     fixed_time = None
+    #
+    #     if fixed:
+    #         day = input("Day (e.g., Monday): ")
+    #         start_time = int(input("Start time (hour): "))
+    #         fixed_time = (day, start_time)
+    #
+    #     dependencies = input("Dependencies (comma-separated, leave blank if none): ").split(",")
+    #     dependencies = [d.strip() for d in dependencies if d.strip()]
+    #
+    #     scheduler.add_task(name, difficulty, time, fixed_time, dependencies)
+    #     print(f"Task '{name}' added successfully!")
+    #     return
+
     def update_whole_list(self,tag:TagSet):
         for t in self.task_list:
             t.update_tag(tag)
@@ -177,15 +219,253 @@ class TaskSet:
     def __repr__(self) -> str:
         return str(self.task_list)
 
+class Scheduler(TaskSet):
+    def __init__(self):
+        # 初始化行程表和可用時間
+        self.schedule = defaultdict(list)  # 每天的行程表
+        start_time = 9
+        end_time = 17
+        self.available_hours = {
+            day: list(range(start_time, end_time)) for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        }
+        self.tasks = []  # 儲存所有任務
+
+
+
+    def assign_fixed_tasks(self):
+        """
+        將固定時間的任務分配到行程表。
+        """
+        for task in self.tasks:
+            if task["fixed_time"]:  # 如果任務有固定時間
+                day, start_time = task["fixed_time"]
+                duration = int(task["time"])
+
+                # 確保時間段足夠
+                if all(hour in self.available_hours[day] for hour in range(start_time, start_time + duration)):
+                    # 分配到行程表
+                    self.schedule[day].append((start_time, task["name"]))
+
+                    # 更新可用時間
+                    for hour in range(start_time, start_time + duration):
+                        self.available_hours[day].remove(hour)
+
+    def resolve_dependencies(self):
+        """
+        根據依賴關係排序任務。
+        """
+        sorted_tasks = []
+        resolved = set()  # 已排序的任務名稱
+
+        while self.tasks:
+            for task in self.tasks:
+                dependencies = task["dependencies"]
+                if not dependencies or all(dep in resolved for dep in dependencies):
+                    sorted_tasks.append(task)
+                    resolved.add(task["name"])
+                    self.tasks.remove(task)
+                    break
+        self.tasks = sorted_tasks
+
+    def assign_general_tasks(self):
+        """
+        將非固定任務分配到行程表。
+        """
+        # 任務按難度和時間排序
+        self.tasks = sorted(self.tasks, key=lambda x: (-x["difficulty"], -x["time"]))
+
+        for task in self.tasks:
+            duration = int(task["time"])
+            for day, hours in self.available_hours.items():
+                # 嘗試找到連續的空閒時段
+                for i in range(len(hours) - duration + 1):
+                    if hours[i:i + duration] == list(range(hours[i], hours[i] + duration)):
+                        # 分配到行程表
+                        self.schedule[day].append((hours[i], task["name"]))
+
+                        # 更新可用時間
+                        for hour in range(hours[i], hours[i] + duration):
+                            self.available_hours[day].remove(hour)
+                        break
+                else:
+                    continue
+                break
+
+    def calculate_fatigue(self):
+        """
+        計算整個行程表的總疲勞值。
+        """
+        total_fatigue = 0
+        fatigue_factor = {"morning": 1, "afternoon": 1.2, "evening": 1.5}
+
+        for day, task_list in self.schedule.items():
+            daily_fatigue = 0
+            difficulty_sum = 0
+            task_count = len(task_list)
+
+            for start_time, task_name in task_list:
+                # 找到對應的任務
+                task = next(t for t in self.tasks if t["name"] == task_name)
+                difficulty = task["difficulty"]
+                time = task["time"]
+
+                # 計算時間段的疲勞係數
+                if 9 <= start_time < 12:
+                    factor = fatigue_factor["morning"]
+                elif 12 <= start_time < 17:
+                    factor = fatigue_factor["afternoon"]
+                else:
+                    factor = fatigue_factor["evening"]
+
+                # 疲勞值累計
+                task_fatigue = difficulty * time * factor
+                daily_fatigue += task_fatigue
+                difficulty_sum += difficulty
+
+                #如果一天平均難度太高的話 疲勞度會指數成長
+                daily_fatigue = daily_fatigue * (1+(difficulty_sum/task_count)**2)
+
+            total_fatigue += daily_fatigue
+
+        return total_fatigue
+
+    def schedule_tasks(self):
+        """
+        執行任務排序並計算疲勞值。
+        """
+        # 固定任務優先分配
+        self.assign_fixed_tasks()
+
+        # 解決任務的依賴關係
+        self.resolve_dependencies()
+
+        # 分配一般任務
+        self.assign_general_tasks()
+
+        # 計算總疲勞值
+        total_fatigue = self.calculate_fatigue()
+
+        return self.schedule, total_fatigue
+
+
+
+    def generate_schedule_dataframe(self, schedule=None):
+        """
+        將行程表轉換為 DataFrame 並排序。
+        """
+        if schedule is None:
+            schedule = self.schedule
+
+        time_slots = [f"{int(hour)}:{'30' if hour % 1 else '00'}" for hour in
+                      [round(9 + 0.5 * i, 1) for i in range(17)]]
+        days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+        df = pd.DataFrame(index = time_slots, columns = days)
+
+        remaining_tasks = []
+        for task in self.tasks:
+            if task["fixed_time"]:
+                day, start_time = task["fixed_time"]
+                duration_slots = int(task["time"] * 2)  # 每小時占用 2 個 0.5 小時段
+                for i in range(duration_slots):
+                    time_slot = round(start_time + 0.5 * i, 1)
+                    time_str = f"{int(time_slot)}:{'30' if time_slot % 1 else '00'}"
+                    if time_str in df.index:
+                        df.at[time_str, day] = task["name"]
+            else:
+                remaining_tasks.append(task)
+
+        for task in remaining_tasks:
+            for day in days:
+                duration_slots = int(task["time"] * 2)
+                available_slots = [
+                    time for time in time_slots if pd.isna(df.at[time, day]) or df.at[time, day] == ""
+                ]
+                # 找到連續的空閒時間段
+                for i in range(len(available_slots) - duration_slots + 1):
+                    if all(available_slots[i + j] in time_slots for j in range(duration_slots)):
+                        # 填入多時段
+                        for j in range(duration_slots):
+                            df.at[available_slots[i + j], day] = task["name"]
+                        break
+                else:
+                    continue
+                break
+
+            # 填充空白單元格為空字符串
+        df.fillna("", inplace=True)
+        return df
+
+    def __repr__(self):
+        return f"Schedule:\n{dict(self.schedule)}"
+
+class optimize(Scheduler):
+    def __init__(self):
+        super().__init__()  # 繼承 Scheduler 的屬性和方法
+        self.best_schedule = None  # 儲存最佳行程
+        self.min_fatigue = float('inf')  # 初始化最小疲勞值為正無窮大
+
+    def minimize_total_fatigue(self):
+        """
+        使用網格搜索法遍歷所有可能的排程組合，找到疲勞值最小的方案。
+        """
+        import itertools
+        all_combinations = itertools.permutations(self.tasks)  # 所有任務排列組合
+        for combination in all_combinations:
+            # 使用當前排列的順序生成行程
+            self.tasks = list(combination)
+            self.schedule = defaultdict(list)  # 重置行程表
+            self.assign_fixed_tasks()
+            self.assign_general_tasks()
+
+            # 計算疲勞值
+            fatigue = self.calculate_fatigue()
+
+            # 更新最佳結果
+            if fatigue < self.min_fatigue:
+                self.min_fatigue = fatigue
+                self.best_schedule = self.schedule
+
+            # 基於最佳結果生成 DataFrame
+        if self.best_schedule:
+            self.best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
+        else:
+            self.best_schedule_df = pd.DataFrame()
+
+        return self.best_schedule_df, self.min_fatigue
+
+        # for combination in all_combinations:
+        #     # 使用當前排列的順序生成行程
+        #     self.tasks = list(combination)
+        #     self.generate_schedule_dataframe()  # 分配任務
+        #
+        #     # 計算疲勞值
+        #     fatigue = self.calculate_fatigue()
+        #
+        #     # 更新最佳結果
+        #     if fatigue < self.min_fatigue:
+        #         self.min_fatigue = fatigue
+        #         self.best_schedule = self.schedule
+        #
+        # self.best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
+        # return self.best_schedule_df, self.min_fatigue
+
+
+
+
 
 #region menu_dict區
-main_menu_dict={
-    "1":"show_menu_task()",
-    "2":"show_menu_tags()",
-    "3":"show_menu_schdule()",
-    "4":"show_menu_optimization()",
+main_menu_display = {
+    "1": "Task Management",
+    "2": "Tag Management",
+    "3": "Schedule Management",
+    "4": "Optimization",
 }
-task_menu_dict={
+# 顯示用字典
+
+
+
+main_menu_dict={
     "1":"task_add(tagset)",
     "2":"task_remove()",
     "3":"task_search()",
@@ -198,7 +478,8 @@ tags_menu_dict={
     "3":"tags_list(tagset)",
     "4":"tags_edit(tagset)"
 }
-schudule_menu_dict={
+
+schedule_menu_dict={
     "1":"schudule_manual_arrange()",
     "2":"tags_auto_arrange()",
 }
@@ -210,10 +491,9 @@ optimization_menu_dict={
 #endregion
 #region menu區
 def show_menu_main():
-    #測試區
-    print(f"show_menu_main")
-    print(main_menu_dict)
-    #程式區
+    print("\nMain Menu:")
+    for key, value in main_menu_display.items():
+        print(f"{key}. {value}")
     
     return 
 def show_menu_task():
@@ -221,11 +501,11 @@ def show_menu_task():
     print(f"show_menu_task")
     #程式區
     while True:
-        print(task_menu_dict)
+        print(main_menu_dict)
         choice=input()
 
         try:
-            exec(task_menu_dict[choice])
+            exec(main_menu_dict[choice])
             
         except Exception as e:
             print(e)
@@ -258,12 +538,12 @@ def show_menu_schdule():
     print(f"show_menu_schdule")
     #程式區
     while True:
-        print(schudule_menu_dict)
+        print(schedule_menu_dict)
 
         choice=input()
 
         try:
-            exec(schudule_menu_dict[choice])
+            exec(schedule_menu_dict[choice])
             
         except:
             if choice=="q":
@@ -291,41 +571,45 @@ def show_menu_optimization():
     return
 #endregion
 #region task區
-def task_add(tagset):
-    #創造task
-    print(f"please enter task name:")
-    task_name=input()
-    creating_task=Task(tagset,task_name)
-    #print(creating_task)
-    temp_attribute_dict={
-    }
-    #print(tag.attributes)
-    for temp_tag in tagset.tags:
-        print(f"what value do you want to set to {temp_tag}?")
-        print(f"the value should be type of {tagset.tags_type[temp_tag].__name__}")
-        
-        temp_attribute_value=input()
-        temp_attribute_dict[temp_tag]=tagset.tags_type[temp_tag](temp_attribute_value)
-        
-        
-    print(temp_attribute_dict,sep="\n")
-    
-    
-    
-    
-    #寫入task
-    try:
-        creating_task.set_attributes(temp_attribute_dict)
-    except:
-        print("you have type error")
-    #print(creating_task)
-    #asdf
-    print(creating_task)
+# def task_add(tagset):
+#     #創造task
+#     print(f"please enter task name:")
+#     task_name=input()
+#     creating_task=Task(tagset,task_name)
+#     #print(creating_task)
+#     temp_attribute_dict={
+#     }
+#     #print(tag.attributes)
+#     for temp_tag in tagset.tags:
+#         print(f"what value do you want to set to {temp_tag}?")
+#         print(f"the value should be type of {tagset.tags_type[temp_tag].__name__}")
+#
+#         temp_attribute_value=input()
+#         temp_attribute_dict[temp_tag]=tagset.tags_type[temp_tag](temp_attribute_value)
+#
+#
+#     print(temp_attribute_dict,sep="\n")
+    # 定義任務添加功能
 
-    taskset.add_task(creating_task)
-    print(*taskset.task_list,sep="\n")
+# 定義任務添加功能
+def task_add(scheduler):
+    print("Enter task details:")
+    name = input("Task name: ")
+    difficulty = int(input("Difficulty (int): "))
+    time = float(input("Time required (hours): "))
+    fixed = input("Fixed time? (y/n): ").strip().lower() == "y"
+    fixed_time = None
 
-    return
+    if fixed:
+        day = input("Day (e.g., Monday): ")
+        start_time = int(input("Start time (hour): "))
+        fixed_time = (day, start_time)
+
+    dependencies = input("Dependencies (comma-separated, leave blank if none): ").split(",")
+    dependencies = [d.strip() for d in dependencies if d.strip()]
+
+    scheduler.add_task(name, difficulty, time, fixed_time, dependencies)
+    print(f"Task '{name}' added successfully!\n")
 
 #endregion
 
@@ -374,22 +658,102 @@ def tags_remove(tagset:TagSet):
     else:
         print(f"cannot find this attribute.")
     return
+def task_menu(scheduler):
+    while True:
+        print("\nTask Menu:")
+        for key, value in main_menu_dict.items():
+            print(f"{key}. {value}")
+        choice = input("Choose an option: ")
+        if choice == "1":
+            task_add(scheduler)
+        elif choice == "2":
+            scheduler.list_tasks()
+        elif choice == "q":
+            break
+        else:
+            print("Invalid option, please try again.")
+
+
 #endregion     
 
-def main():    
+# def main():
+#     scheduler = Scheduler()
+#     while True:
+#         show_menu_main()
+#         first_input = input("Choose an option (1-4): ")
+#         try:
+#             exec(main_menu_dict[first_input])
+#         except:
+#             if first_input=="q":
+#                 break
+#             else:
+#                 print(f"unvalid code!")
+
+
+
+# def main():
+#     scheduler = Scheduler()
+#     main_menu_actions = {
+#         "1": lambda: task_add(scheduler),  # 傳遞 scheduler 實例到 task_add
+#         "2": show_menu_tags,
+#         "3": show_menu_schdule,
+#         "4": show_menu_optimization,
+#     }
+#     while True:
+#         show_menu_main()  # 顯示主選單
+#         first_input = input("Choose an option (1-4, or 'q' to quit and schedule tasks): ")
+#         try:
+#             if first_input == "q":
+#                 # 在退出前調用 Scheduler 進行排序
+#                 print("Generating schedule...")
+#                 schedule, total_fatigue = scheduler.schedule_tasks()
+#                 print("\nGenerated Schedule:")
+#                 print(schedule)
+#                 print(f"\nTotal Fatigue: {total_fatigue}")
+#                 break  # 結束程式
+#             elif first_input in main_menu_actions:
+#                 main_menu_actions[first_input]()  # 執行選單對應功能
+#             else:
+#                 print("Invalid option. Please choose again.")
+#         except Exception as e:
+#             print(f"An error occurred: {e}")
+
+
+
+def main():
+    scheduler = optimize()  # 初始化 Scheduler 實例
+
     while True:
         show_menu_main()
-        first_input = input("Choose an option (1-4): ")
-        try:
-            exec(main_menu_dict[first_input])
-        except:
-            if first_input=="q":
-                break
+        first_input = input("Choose an option (1-4, or 'q' to quit): ")
+        if first_input == "1":
+            task_menu(scheduler)
+        elif first_input == "2":
+            print("Tag Management - Not implemented yet!")
+            show_menu_tags()
+
+        elif first_input == "3":
+            print("Schedule Management - Not implemented yet!")
+
+        elif first_input == "4":
+            best_schedule, min_fatigue = scheduler.minimize_total_fatigue()
+            if best_schedule is not None:
+                print("\nOptimized Schedule:")
+                print(tabulate(best_schedule, headers="keys", tablefmt="fancy_grid"))
+                print(f"\nMinimum Fatigue: {min_fatigue}")
             else:
-                print(f"unvalid code!")
+                print("No tasks available for optimization.")
+
+        elif first_input == "q":
+            print("Exiting program...")
+            break
+        else:
+            print("Invalid option, please try again.")
+
+
 
 def test():
-    
+    main()
     return
 
 
@@ -398,4 +762,6 @@ if __name__ == "__main__":
     tagset=TagSet()
     taskset=TaskSet()
     test()
-#test1
+
+# if __name__ == "__main__":
+#     main()
