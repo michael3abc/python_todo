@@ -220,25 +220,29 @@ class TaskSet:
     def __repr__(self) -> str:
         return str(self.task_list)
 
-class Scheduler(TaskSet):
+from collections import defaultdict
+import itertools
+import pandas as pd
+
+
+class Scheduler:
     def __init__(self):
         # 初始化行程表和可用時間
         self.schedule = defaultdict(list)  # 每天的行程表
         start_time = 9
         end_time = 17
         self.available_hours = {
-            day: list(range(start_time, end_time)) for day in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            day: list(range(start_time, end_time)) for day in
+            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         }
         self.tasks = []  # 儲存所有任務
         self.min_fatigue = float('inf')
-
-
 
     def assign_fixed_tasks(self):
         """
         將固定時間的任務分配到行程表。
         """
-        for task in self.tasks:
+        for task in list(self.tasks):  # 使用 list 避免修改迴圈中的物件
             if task["fixed_time"]:  # 如果任務有固定時間
                 day, start_time = task["fixed_time"]
                 duration = int(task["time"])
@@ -252,31 +256,14 @@ class Scheduler(TaskSet):
                     for hour in range(start_time, start_time + duration):
                         self.available_hours[day].remove(hour)
 
-    def resolve_dependencies(self):
-        """
-        根據依賴關係排序任務。
-        """
-        sorted_tasks = []
-        resolved = set()  # 已排序的任務名稱
-
-        while self.tasks:
-            for task in self.tasks:
-                dependencies = task["dependencies"]
-                if not dependencies or all(dep in resolved for dep in dependencies):
-                    sorted_tasks.append(task)
-                    resolved.add(task["name"])
+                    # 從任務清單中移除該任務
                     self.tasks.remove(task)
-                    break
-        self.tasks = sorted_tasks
 
     def assign_general_tasks(self):
         """
         將非固定任務分配到行程表。
         """
-        # 任務按難度和時間排序
-        # self.tasks = sorted(self.tasks, key=lambda x: (-x["difficulty"], -x["time"]))
-
-        for task in self.tasks:
+        for task in list(self.tasks):
             duration = int(task["time"])
             for day, hours in self.available_hours.items():
                 # 嘗試找到連續的空閒時段
@@ -288,6 +275,9 @@ class Scheduler(TaskSet):
                         # 更新可用時間
                         for hour in range(hours[i], hours[i] + duration):
                             self.available_hours[day].remove(hour)
+
+                        # 從任務清單中移除該任務
+                        self.tasks.remove(task)
                         break
                 else:
                     continue
@@ -304,8 +294,8 @@ class Scheduler(TaskSet):
             daily_difficulty_sum = 0
 
             for start_time, task_name in task_list:
-                # 找到對應的任務
-                task = next(t for t in self.tasks if t["name"] == task_name)
+                # 根據任務名稱在初始任務清單中查找
+                task = next(t for t in self.tasks + sum(self.schedule.values(), []) if t["name"] == task_name)
                 difficulty = task["difficulty"]
                 time = task["time"]
                 task_fatigue = difficulty * time
@@ -313,64 +303,12 @@ class Scheduler(TaskSet):
                 daily_fatigue += task_fatigue
                 daily_difficulty_sum += difficulty
 
+            # 基於每日難度進行加權
             daily_fatigue *= (1 + daily_difficulty_sum)
             total_fatigue += daily_fatigue
 
         return total_fatigue
 
-
-    # def schedule_tasks(self):
-    #     """
-    #     執行任務排序並計算疲勞值。
-    #     """
-    #     # 固定任務優先分配
-    #     self.assign_fixed_tasks()
-    #
-    #     # 解決任務的依賴關係
-    #     self.resolve_dependencies()
-    #
-    #     # 分配一般任務
-    #     self.assign_general_tasks()
-    #
-    #     # 計算總疲勞值
-    #     total_fatigue = self.calculate_fatigue()
-    #
-    #     return self.schedule, total_fatigue
-
-    # def minimize_total_fatigue(self):
-    #     """
-    #     遍歷任務排列組合，找到疲勞值最小的最佳行程表。
-    #     """
-    #     import itertools
-    #
-    #     if not self.tasks:
-    #         return None, 0  # 沒有任務時直接返回
-    #
-    #     all_combinations = itertools.permutations(self.tasks)
-    #
-    #     for combination in all_combinations:
-    #         # 重置行程表
-    #         self.schedule = defaultdict(list)
-    #         self.available_hours = {
-    #             day: list(range(9, 17)) for day in
-    #             ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    #         }
-    #
-    #         # 更新任務排序並分配
-    #         self.tasks = list(combination)
-    #         self.assign_fixed_tasks()
-    #         self.assign_general_tasks()
-    #
-    #         # 計算疲勞值
-    #         fatigue = self.calculate_fatigue()
-    #
-    #         if fatigue < self.min_fatigue:
-    #             self.min_fatigue = fatigue
-    #             self.best_schedule = self.schedule.copy()
-    #
-    #     # 基於最佳結果生成行程表
-    #     best_schedule_df = self.generate_schedule_dataframe(schedule=self.best_schedule)
-    #     return best_schedule_df, self.min_fatigue
     def minimize_total_fatigue(self):
         """
         遍歷跨天、跨時段的任務排列組合，找到疲勞值最小的行程表。
@@ -407,7 +345,6 @@ class Scheduler(TaskSet):
         schedule_df = self.generate_schedule_dataframe(schedule=best_schedule)
         return schedule_df, min_fatigue
 
-
     def generate_schedule_dataframe(self, schedule=None):
         """
         將行程表轉換為 DataFrame 並排序。
@@ -419,44 +356,19 @@ class Scheduler(TaskSet):
                       [round(9 + 0.5 * i, 1) for i in range(17)]]
         days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-        df = pd.DataFrame(index = time_slots, columns = days)
+        df = pd.DataFrame(index=time_slots, columns=days)
 
-        remaining_tasks = []
-        for task in self.tasks:
-            if task["fixed_time"]:
-                day, start_time = task["fixed_time"]
-                duration_slots = int(task["time"] * 2)  # 每小時占用 2 個 0.5 小時段
-                for i in range(duration_slots):
-                    time_slot = round(start_time + 0.5 * i, 1)
-                    time_str = f"{int(time_slot)}:{'30' if time_slot % 1 else '00'}"
-                    if time_str in df.index:
-                        df.at[time_str, day] = task["name"]
-            else:
-                remaining_tasks.append(task)
+        for day, tasks in schedule.items():
+            for start_time, task_name in tasks:
+                df.at[f"{start_time}:00", day] = task_name
 
-        for task in remaining_tasks:
-            for day in days:
-                duration_slots = int(task["time"] * 2)
-                available_slots = [
-                    time for time in time_slots if pd.isna(df.at[time, day]) or df.at[time, day] == ""
-                ]
-                # 找到連續的空閒時間段
-                for i in range(len(available_slots) - duration_slots + 1):
-                    if all(available_slots[i + j] in time_slots for j in range(duration_slots)):
-                        # 填入多時段
-                        for j in range(duration_slots):
-                            df.at[available_slots[i + j], day] = task["name"]
-                        break
-                else:
-                    continue
-                break
-
-            # 填充空白單元格為空字符串
+        # 填充空白單元格為空字符串
         df.fillna("", inplace=True)
         return df
 
     def __repr__(self):
         return f"Schedule:\n{dict(self.schedule)}"
+
 
 # class optimize(Scheduler):
 #     def __init__(self):
