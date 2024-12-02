@@ -1,0 +1,6 @@
+name,type,comments,visibility
+difficulty,int,please be 1-5,True
+spent time,int,(unit:30min),True
+123,int,,True
+345,int,,True
+dhrthrhrt,dict,,False

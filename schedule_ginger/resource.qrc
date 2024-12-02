@@ -1,0 +1,7 @@
+<RCC>
+  <qresource prefix="icons">
+    <file>icons/close_24dp_E8EAED_FILL1_wght400_GRAD0_opsz24.png</file>
+    <file>icons/remove_24dp_E8EAED_FILL1_wght400_GRAD0_opsz24.png</file>
+  </qresource>
+  <qresource prefix="images"/>
+</RCC>
