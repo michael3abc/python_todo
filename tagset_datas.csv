@@ -1,0 +1,4 @@
+name,type,priority,visibility
+,int,,True
+,int,,True
+,int,,True
