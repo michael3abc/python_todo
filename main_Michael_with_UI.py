@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QTimeEdit, QHeaderView, QScrollArea, QFrame, QSpacerItem, QSizePolicy,
     QStackedWidget
 )
-from PyQt5.QtCore import Qt, QMimeData, QTime
+from PyQt5.QtCore import Qt, QMimeData, QTime, QThread, pyqtSignal
 from PyQt5.QtGui import QDrag, QPixmap, QPainter
 
 # Constants
@@ -48,6 +48,8 @@ class Scheduler:
         self.tasks = []
         self.task_dict = {}  # 用於加速任務查找
         self.fatigue_calculation = fatigue_calculation or self.default_fatigue_calculation
+        self.best_schedule = None
+        self.min_fatigue = float('inf')
 
     def default_fatigue_calculation(self, task):
         """
@@ -58,9 +60,9 @@ class Scheduler:
         """
         return task.get("difficulty", 1) * task.get("time", 1)
 
-    def calculate_fatigue(self):
+    def calculate_fatigue(self, schedule):
         total_fatigue = 0
-        for day_tasks in self.schedule:
+        for day_tasks in schedule:
             daily_fatigue = 0
             daily_priority_sum = 0
             for task in day_tasks:
@@ -72,118 +74,50 @@ class Scheduler:
             total_fatigue += daily_fatigue
         return total_fatigue
 
-    def assign_task(self, task):
+    def greedy_optimize(self):
         """
-        嘗試將任務分配到排程中。
-
-        :param task: 任務字典
-        :return: 是否成功分配
+        使用貪心算法來分配任務，優先分配優先級高的任務。
         """
-        duration = int(task["time"])
-        num_slots = duration * (60 // self.interval_minutes)
+        # 排序任務，優先分配優先級高的
+        sorted_tasks = sorted(self.tasks, key=lambda x: x.get("priority", 1), reverse=True)
+        temp_schedule = [[None for _ in range(self.num_intervals_per_day)] for _ in range(7)]
+        total_fatigue = 0
 
-        if task.get("fixed_time"):
-            day, start_hour, start_minute = task["fixed_time"]  # e.g., ('Monday', 9, 0)
-            day_index = self.days.index(day)
-            start_slot = int(
-                (start_hour - self.start_time) * (60 // self.interval_minutes) + start_minute / self.interval_minutes)
-            if start_slot < 0 or start_slot + num_slots > self.num_intervals_per_day:
-                return False  # 固定時間超出範圍
-            # 檢查是否有空閒
-            for slot in range(start_slot, start_slot + num_slots):
-                if self.schedule[day_index][slot]:
-                    return False  # 時間區間已被佔用
-            # 分配任務
-            for slot in range(start_slot, start_slot + num_slots):
-                self.schedule[day_index][slot] = task
-            return True
-        else:
-            # 遍歷所有天和時間區間尋找空閒
-            for day_index in range(7):
-                for start_slot in range(self.num_intervals_per_day - num_slots + 1):
-                    # 檢查區間是否空閒
-                    occupied = False
-                    for slot in range(start_slot, start_slot + num_slots):
-                        if self.schedule[day_index][slot]:
-                            occupied = True
-                            break
-                    if not occupied:
-                        # 分配任務
-                        for slot in range(start_slot, start_slot + num_slots):
-                            self.schedule[day_index][slot] = task
-                        return True
-            return False  # 沒有可用的時間區間
+        for task in sorted_tasks:
+            duration = int(task["time"])
+            num_slots = duration * (60 // self.interval_minutes)
+            assigned = False
 
-    def minimize_total_fatigue(self):
-        self.min_fatigue = float('inf')
-        self.best_schedule = copy.deepcopy(self.schedule)
-        self.backtrack(0)
-        return self.best_schedule, self.min_fatigue
-
-    def backtrack(self, index):
-        if index >= len(self.tasks):
-            fatigue = self.calculate_fatigue()
-            if fatigue < self.min_fatigue:
-                self.min_fatigue = fatigue
-                self.best_schedule = copy.deepcopy(self.schedule)
-            return
-
-        task = self.tasks[index]
-        possible_assignments = self.get_possible_assignments(task)
-        for day_index, start_slot in possible_assignments:
-            # 分配任務
-            assigned = True
-            for slot in range(start_slot, start_slot + int(task["time"] * (60 // self.interval_minutes))):
-                if self.schedule[day_index][slot]:
-                    assigned = False
-                    break
-            if not assigned:
-                continue
-            for slot in range(start_slot, start_slot + int(task["time"] * (60 // self.interval_minutes))):
-                self.schedule[day_index][slot] = task
-            # 繼續遞迴
-            self.backtrack(index + 1)
-            # 撤銷分配
-            for slot in range(start_slot, start_slot + int(task["time"] * (60 // self.interval_minutes))):
-                self.schedule[day_index][slot] = None
-
-    def get_possible_assignments(self, task):
-        """
-        獲取任務可能的分配位置。
-
-        :param task: 任務字典
-        :return: 列表，包含 (day_index, start_slot) 的元組
-        """
-        assignments = []
-        duration = int(task["time"])
-        num_slots = duration * (60 // self.interval_minutes)
-
-        if task.get("fixed_time"):
-            day, start_hour, start_minute = task["fixed_time"]
-            day_index = self.days.index(day)
-            start_slot = int(
-                (start_hour - self.start_time) * (60 // self.interval_minutes) + start_minute / self.interval_minutes)
-            if 0 <= start_slot <= self.num_intervals_per_day - num_slots:
-                # 檢查是否有空閒
-                occupied = False
-                for slot in range(start_slot, start_slot + num_slots):
-                    if self.schedule[day_index][slot]:
-                        occupied = True
-                        break
-                if not occupied:
-                    assignments.append((day_index, start_slot))
-        else:
-            for day_index in range(7):
-                for start_slot in range(self.num_intervals_per_day - num_slots + 1):
+            if task.get("fixed_time"):
+                day, start_hour, start_minute = task["fixed_time"]
+                day_index = self.days.index(day)
+                start_slot = int((start_hour - self.start_time) * (
+                            60 // self.interval_minutes) + start_minute / self.interval_minutes)
+                if 0 <= start_slot <= self.num_intervals_per_day - num_slots:
                     # 檢查是否有空閒
-                    occupied = False
-                    for slot in range(start_slot, start_slot + num_slots):
-                        if self.schedule[day_index][slot]:
-                            occupied = True
+                    if all(temp_schedule[day_index][slot] is None for slot in
+                           range(start_slot, start_slot + num_slots)):
+                        for slot in range(start_slot, start_slot + num_slots):
+                            temp_schedule[day_index][slot] = task
+                        assigned = True
+            else:
+                for day_index in range(7):
+                    for start_slot in range(self.num_intervals_per_day - num_slots + 1):
+                        if all(temp_schedule[day_index][slot] is None for slot in
+                               range(start_slot, start_slot + num_slots)):
+                            for slot in range(start_slot, start_slot + num_slots):
+                                temp_schedule[day_index][slot] = task
+                            assigned = True
                             break
-                    if not occupied:
-                        assignments.append((day_index, start_slot))
-        return assignments
+                    if assigned:
+                        break
+
+            if not assigned:
+                print(f"未能分配任務: {task['name']}")
+
+        self.best_schedule = temp_schedule
+        self.min_fatigue = self.calculate_fatigue(temp_schedule)
+        return self.best_schedule, self.min_fatigue
 
     def add_tasks(self, tasks):
         self.tasks.extend(tasks)
@@ -206,6 +140,22 @@ class Scheduler:
                         "slot": slot_index
                     })
         return schedule_list
+
+
+class OptimizeThread(QThread):
+    optimization_finished = pyqtSignal(list, float)
+    optimization_failed = pyqtSignal(str)
+
+    def __init__(self, scheduler):
+        super().__init__()
+        self.scheduler = scheduler
+
+    def run(self):
+        try:
+            schedule, fatigue = self.scheduler.greedy_optimize()
+            self.optimization_finished.emit(schedule, fatigue)
+        except Exception as e:
+            self.optimization_failed.emit(str(e))
 
 
 class TaskDetailsDialog(QDialog):
@@ -628,6 +578,9 @@ class MainWindow(QMainWindow):
         # Load existing tasks
         self.load_tasks()
 
+        # Initialize OptimizeThread
+        self.optimize_thread = None
+
     def save_settings(self):
         """Save the current settings (start time, end time, time interval) to a JSON file."""
         settings = {
@@ -965,11 +918,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No tasks available to optimize. Please add tasks first.")
             return
 
-        # Perform optimization
-        schedule_list, min_fatigue = self.scheduler.minimize_total_fatigue()
+        # Disable the Optimize button to prevent multiple clicks
+        self.optimize_button.setEnabled(False)
 
-        # Update the ScheduleWidget with the optimized schedule and fatigue value
+        # Create and start the OptimizeThread
+        self.optimize_thread = OptimizeThread(self.scheduler)
+        self.optimize_thread.optimization_finished.connect(self.on_optimization_finished)
+        self.optimize_thread.optimization_failed.connect(self.on_optimization_failed)
+        self.optimize_thread.start()
+
+    def on_optimization_finished(self, schedule_list, min_fatigue):
+        """Handle the completion of the optimization."""
         self.schedule_widget.update_schedule_display(schedule_list, min_fatigue)
+        QMessageBox.information(self, "Optimization Complete", f"Minimum Fatigue: {min_fatigue}")
+        self.optimize_button.setEnabled(True)
+
+    def on_optimization_failed(self, error_message):
+        """Handle optimization failure."""
+        QMessageBox.critical(self, "Optimization Failed", f"An error occurred during optimization:\n{error_message}")
+        self.optimize_button.setEnabled(True)
 
     def save_tasks_to_txt(self, tasks, filename=TASKS_FILE):
         """
@@ -1104,6 +1071,27 @@ class MainWindow(QMainWindow):
         self.load_settings()
 
         return settings_page
+
+    def update_schedule(self):
+        """Update the schedule table based on the settings."""
+        start_time = self.start_time_edit.time().toString("HH:mm")
+        end_time = self.end_time_edit.time().toString("HH:mm")
+        interval = self.interval_spinbox.value()
+
+        # Update Scheduler's work hours
+        self.scheduler.start_time = int(start_time.split(":")[0])
+        self.scheduler.end_time = int(end_time.split(":")[0])
+        self.scheduler.interval_minutes = interval
+        self.scheduler.num_intervals_per_day = int(
+            (self.scheduler.end_time - self.scheduler.start_time) * 60 / self.scheduler.interval_minutes)
+        self.scheduler.schedule = [[None for _ in range(self.scheduler.num_intervals_per_day)] for _ in
+                                   range(7)]  # Reset schedule
+
+        # Re-initialize the schedule table
+        self.schedule_widget.setup_table(interval_minutes=interval, start_time_str=start_time, end_time_str=end_time)
+
+        # Adjust the table sizes after updating
+        self.schedule_widget.adjust_table_sizes()
 
 
 def main():
