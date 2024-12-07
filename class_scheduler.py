@@ -102,16 +102,16 @@ class Scheduler():
 # Example usage
 scheduler = Scheduler()
 scheduler.tasks = [
-    {"name": "Task A", "difficulty": 4, "time": 4, "fixed_time": ('Friday',9), "dependencies": []},
-    # {"name": "Task A", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
+    # {"name": "Task A", "difficulty": 4, "time": 4, "fixed_time": ('Friday',9), "dependencies": []},
+    {"name": "Task A", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
     {"name": "Task B", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
-    # {"name": "Task C", "difficulty": 2, "time": 2, "fixed_time": None, "dependencies": []},
-    {"name": "Task C", "difficulty": 2, "time": 2, "fixed_time": ('Friday',13), "dependencies": []},
-    {"name": "Task D", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
-    {"name": "Task E", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
-    {"name": "Task F", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
-    {"name": "Task G", "difficulty": 4, "time": 4, "fixed_time": ('Sunday', 9), "dependencies": []},
-    {"name": "Task H", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
+    # # {"name": "Task C", "difficulty": 2, "time": 2, "fixed_time": None, "dependencies": []},
+    # {"name": "Task C", "difficulty": 2, "time": 2, "fixed_time": ('Friday',13), "dependencies": []},
+    # {"name": "Task D", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
+    # {"name": "Task E", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
+    # {"name": "Task F", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
+    # {"name": "Task G", "difficulty": 4, "time": 4, "fixed_time": ('Sunday', 9), "dependencies": []},
+    # {"name": "Task H", "difficulty": 4, "time": 4, "fixed_time": None, "dependencies": []},
 
 
 ]

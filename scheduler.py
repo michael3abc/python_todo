@@ -1,16 +1,18 @@
 # scheduler.py
 import copy
 import numpy as np
+import re
+
 
 class Scheduler:
     def __init__(self, start_time=9, end_time=17, interval_minutes=30, fatigue_calculation=None):
         """
-        初始化排程器。
+        Initialize the scheduler.
 
-        :param start_time: 工作開始時間（24小時制），預設為9。
-        :param end_time: 工作結束時間（24小時制），預設為17。
-        :param interval_minutes: 每個時間區間的分鐘數，預設為30。
-        :param fatigue_calculation: 用戶自定義的疲勞計算函數。
+        :param start_time: Work start time (24-hour format), default is 9.
+        :param end_time: Work end time (24-hour format), default is 17.
+        :param interval_minutes: Minutes per time slot, default is 30.
+        :param fatigue_calculation: User-defined fatigue calculation function.
         """
         if not (0 <= start_time < 24) or not (0 < end_time <= 24):
             raise ValueError("工作時間必須在0到24之間。")
@@ -24,244 +26,314 @@ class Scheduler:
         self.interval_minutes = interval_minutes
         self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         self.num_intervals_per_day = int((self.end_time - self.start_time) * 60 / self.interval_minutes)
-        self.schedule = [[] for _ in range(7)]  # 0: Monday, ..., 6: Sunday
+
+        # Initialize schedule structure: 7 days, each with a fixed number of time slots, default to None
+        self.schedule = [[None for _ in range(self.num_intervals_per_day)] for _ in range(7)]
+
         self.tasks = []
-        self.task_dict = {}  # 用於加速任務查找
+        self.task_dict = {}
         self.fatigue_calculation = fatigue_calculation or self.default_fatigue_calculation
+
+        # Variables for tracking the best schedule
+        self.min_fatigue = float('inf')
+        self.best_schedule = None
+
+        # Variables for incremental fatigue calculation
+        self.day_unique_tasks = [set() for _ in range(7)]
+        self.day_difficulty_sum = [0 for _ in range(7)]
+        self.day_fatigue_sum = [0.0 for _ in range(7)]
+        self.day_fatigue = [0.0 for _ in range(7)]
+        self.total_fatigue = 0.0
 
     def default_fatigue_calculation(self, task):
         """
-        默認的疲勞計算方式：difficulty * time
-
-        :param task: 任務字典
-        :return: 計算出的疲勞值
+        Default fatigue calculation: difficulty * time
         """
         return task.get("difficulty", 1) * task.get("time", 1)
 
     def calculate_fatigue(self):
         total_fatigue = 0
-        for day_tasks in self.schedule:
+        task_mapping = {task['name']: task for task in self.tasks}
+
+        for day_index, day_slots in enumerate(self.schedule):
             daily_fatigue = 0
-            daily_priority_sum = 0
-            for task in day_tasks:
+            daily_difficulty_sum = 0
+            unique_tasks = set()
+
+            for slot in day_slots:
+                if slot is not None:
+                    unique_tasks.add(slot["name"])
+
+            for task_name in unique_tasks:
+                task = task_mapping[task_name]
                 task_fatigue = self.fatigue_calculation(task)
                 daily_fatigue += task_fatigue
-                daily_priority_sum += task.get("priority", 0)
-            daily_fatigue *= (1 + daily_priority_sum)
+                daily_difficulty_sum += task["difficulty"]
+
+            daily_fatigue *= (1 + daily_difficulty_sum)
             total_fatigue += daily_fatigue
+
         return total_fatigue
 
     def assign_task(self, task):
         """
-        嘗試將任務分配到排程中。
-
-        :param task: 任務字典
-        :return: 是否成功分配
+        Try to assign a task to the schedule.
+        Assign higher priority tasks first.
         """
-        duration = int(task["time"])
-        num_slots = duration * 2  # 30分鐘一個區間
+        duration = task["time"]  # Duration in hours
+        num_slots = int(duration * (60 / self.interval_minutes))  # Convert to number of slots
 
         if task.get("fixed_time"):
             day, start_hour, start_minute = task["fixed_time"]  # e.g., ('Monday', 9, 0)
             day_index = self.days.index(day)
-            start_slot = int((start_hour - self.start_time) * 2 + start_minute / self.interval_minutes)
+            start_slot = int(
+                (start_hour - self.start_time) * (60 / self.interval_minutes) + start_minute / self.interval_minutes)
             if start_slot < 0 or start_slot + num_slots > self.num_intervals_per_day:
-                return False  # 固定時間超出範圍
-            # 檢查是否有空閒
+                return False  # Fixed time out of range
+
+            # Check if the specified time slots are free
             for slot in range(start_slot, start_slot + num_slots):
-                if self.schedule[day_index].count(slot) > 0:
-                    return False  # 時間區間已被佔用
-            # 分配任務
+                if self.schedule[day_index][slot] is not None:
+                    return False  # Time slot already occupied
+
+            # Assign task to the specified time slots
             for slot in range(start_slot, start_slot + num_slots):
-                self.schedule[day_index].append(task)
+                self.schedule[day_index][slot] = task
             return True
         else:
-            # 隨機或優先選擇可用的時間區間
+            # Try to find a suitable time slot throughout the week
             for day_index in range(7):
                 for start_slot in range(self.num_intervals_per_day - num_slots + 1):
-                    # 檢查區間是否空閒
-                    occupied = False
-                    for slot in range(start_slot, start_slot + num_slots):
-                        if any(existing_task for existing_task in self.schedule[day_index] if existing_task == task):
-                            occupied = True
-                            break
-                    if not occupied:
-                        # 分配任務
+                    # Check if all consecutive slots are free
+                    if all(self.schedule[day_index][slot] is None for slot in range(start_slot, start_slot + num_slots)):
+                        # Assign task
                         for slot in range(start_slot, start_slot + num_slots):
-                            self.schedule[day_index].append(task)
+                            self.schedule[day_index][slot] = task
                         return True
-            return False  # 沒有可用的時間區間
+            return False  # No available time slots
 
     def minimize_total_fatigue(self):
+        """
+        Find the schedule that minimizes total fatigue using backtracking.
+        """
+        # Precompute fatigue for each task
+        for task in self.tasks:
+            task["fatigue"] = self.fatigue_calculation(task)
+
+        # Sort tasks by priority descending and then by the number of possible assignments ascending
+        self.tasks.sort(key=lambda t: (-t.get("priority", 0), self.count_possible_assignments(t)))
+
         self.min_fatigue = float('inf')
-        self.best_schedule = copy.deepcopy(self.schedule)
-        self.backtrack(self.tasks, 0)
+        self.best_schedule = None
+        self.total_fatigue = 0.0
+
+        self.backtrack(0)
         return self.best_schedule, self.min_fatigue
 
-    def backtrack(self, tasks, index):
-        if index >= len(tasks):
-            fatigue = self.calculate_fatigue()
-            if fatigue < self.min_fatigue:
-                self.min_fatigue = fatigue
-                self.best_schedule = copy.deepcopy(self.schedule)
+    def backtrack(self, index):
+        """
+        Backtracking function to assign tasks and minimize fatigue.
+        """
+        if index >= len(self.tasks):
+            if self.total_fatigue < self.min_fatigue:
+                self.min_fatigue = self.total_fatigue
+                self.best_schedule = [list(day) for day in self.schedule]
             return
 
-        task = tasks[index]
+        task = self.tasks[index]
         possible_assignments = self.get_possible_assignments(task)
-        for day_index, start_slot in possible_assignments:
-            # 分配任務
-            for _ in range(int(task["time"] * 2)):
-                self.schedule[day_index].append(task)
-            # 繼續遞迴
-            self.backtrack(tasks, index + 1)
-            # 撤銷分配
-            for _ in range(int(task["time"] * 2)):
-                self.schedule[day_index].remove(task)
+
+        for day_index, start_slot, num_slots in possible_assignments:
+            # Assign the task to the schedule
+            for slot in range(start_slot, start_slot + num_slots):
+                self.schedule[day_index][slot] = task
+
+            # Determine if the task is new for the day
+            is_new_task_for_day = task["name"] not in self.day_unique_tasks[day_index]
+
+            if is_new_task_for_day:
+                # Update per-day tracking
+                self.day_unique_tasks[day_index].add(task["name"])
+                self.day_difficulty_sum[day_index] += task["difficulty"]
+                self.day_fatigue_sum[day_index] += task["fatigue"]
+                old_day_fatigue = self.day_fatigue[day_index]
+                self.day_fatigue[day_index] = self.day_fatigue_sum[day_index] * (1 + self.day_difficulty_sum[day_index])
+                self.total_fatigue += self.day_fatigue[day_index] - old_day_fatigue
+
+            # Prune if current total fatigue exceeds the minimum found
+            if self.total_fatigue < self.min_fatigue:
+                self.backtrack(index + 1)
+
+            # Undo the assignment
+            for slot in range(start_slot, start_slot + num_slots):
+                self.schedule[day_index][slot] = None
+
+            if is_new_task_for_day:
+                # Revert per-day tracking
+                self.day_unique_tasks[day_index].remove(task["name"])
+                self.day_difficulty_sum[day_index] -= task["difficulty"]
+                self.day_fatigue_sum[day_index] -= task["fatigue"]
+                old_day_fatigue = self.day_fatigue[day_index]
+                self.day_fatigue[day_index] = self.day_fatigue_sum[day_index] * (1 + self.day_difficulty_sum[day_index])
+                self.total_fatigue += self.day_fatigue[day_index] - old_day_fatigue
+
+    def count_possible_assignments(self, task):
+        """
+        Count the number of possible assignments for a task.
+        This helps in sorting tasks with fewer options first.
+        """
+        return len(self.get_possible_assignments(task))
 
     def get_possible_assignments(self, task):
         """
-        獲取任務可能的分配位置。
-
-        :param task: 任務字典
-        :return: 列表，包含 (day_index, start_slot) 的元組
+        Get all possible assignments for a task.
         """
         assignments = []
-        duration = int(task["time"])
-        num_slots = duration * 2
+        duration = task["time"]  # Duration in hours
+        num_slots = int(duration * (60 / self.interval_minutes))  # Convert to number of slots
 
         if task.get("fixed_time"):
             day, start_hour, start_minute = task["fixed_time"]
             day_index = self.days.index(day)
-            start_slot = int((start_hour - self.start_time) * 2 + start_minute / self.interval_minutes)
+            start_slot = int(
+                (start_hour - self.start_time) * (60 / self.interval_minutes) + start_minute / self.interval_minutes)
             if 0 <= start_slot <= self.num_intervals_per_day - num_slots:
-                # 檢查是否有空閒
-                occupied = False
-                for slot in range(start_slot, start_slot + num_slots):
-                    if any(existing_task for existing_task in self.schedule[day_index] if existing_task == task):
-                        occupied = True
-                        break
-                if not occupied:
-                    assignments.append((day_index, start_slot))
+                if all(self.schedule[day_index][slot] is None for slot in range(start_slot, start_slot + num_slots)):
+                    assignments.append((day_index, start_slot, num_slots))
         else:
             for day_index in range(7):
                 for start_slot in range(self.num_intervals_per_day - num_slots + 1):
-                    # 檢查是否有空閒
-                    occupied = False
-                    for slot in range(start_slot, start_slot + num_slots):
-                        if any(existing_task for existing_task in self.schedule[day_index] if existing_task == task):
-                            occupied = True
-                            break
-                    if not occupied:
-                        assignments.append((day_index, start_slot))
+                    if all(self.schedule[day_index][slot] is None for slot in range(start_slot, start_slot + num_slots)):
+                        assignments.append((day_index, start_slot, num_slots))
         return assignments
 
-    def generate_schedule_list(self):
+    def generate_schedule_list(self, schedule=None):
         """
-        將排程轉換為列表格式，便於 GUI 使用。
+        Convert the schedule to a list format for GUI or printing.
+        Default schedule is self.best_schedule.
+        """
+        if schedule is None:
+            schedule = self.best_schedule
+        if schedule is None:
+            return []
 
-        :return: 二維列表，7天，每天16個時間區間
-        """
-        schedule_list = [[] for _ in range(7)]
-        for day_index, day_tasks in enumerate(self.schedule):
-            # 假設每個任務佔用固定的時間區間
-            for task in day_tasks:
-                # 根據任務的固定時間或隨機分配時間
-                # 此處需要根據具體實現進行調整
-                pass  # 詳細實現依賴於 assign_task 的具體邏輯
-        return schedule_list
+        # Generate a 2D list, each day as a row
+        # Print task names or '-' for empty slots
+        result = []
+        for day_index, slots in enumerate(schedule):
+            day_slots = []
+            for slot in slots:
+                if slot is None:
+                    day_slots.append('-')
+                else:
+                    day_slots.append(slot["name"])
+            result.append(day_slots)
+        return result
 
     def add_tasks(self, tasks):
+        """
+        Add tasks to the scheduler.
+        """
         self.tasks.extend(tasks)
         for task in tasks:
             self.task_dict[task["name"]] = task
 
+    def generate_fatigue_function(expression, allowed_vars, default_values=None):
+        """
+        Generate a fatigue calculation function based on a user-provided mathematical expression.
 
-tasks = [
-    {
-        "name": "Task 1",
-        "time": 4,  # 持續 2 小時
-        "difficulty": 4,  # 難度 3
-        "priority": 1,  # 優先級 1
-        "fixed_time": ("Monday", 9, 0)  # 固定時間：星期一，從 9:00 開始
-    },
-    {
-        "name": "Task 2",
-        "time": 4,  # 持續 1 小時
-        "difficulty": 4,
-        "priority": 2,
-        "fixed_time": ("Monday", 11, 0)
-    },
-    # {
-    #     "name": "Task 3",
-    #     "time": 1.5,  # 持續 1 小時 30 分鐘
-    #     "difficulty": 4,
-    #     "priority": 3,
-    #     "fixed_time": ("Tuesday", 14, 30)
-    # },
-    # {
-    #     "name": "Task 4",
-    #     "time": 0.5,  # 持續 30 分鐘
-    #     "difficulty": 1,
-    #     "priority": 0,
-    #     "fixed_time": None  # 無固定時間，隨機分配
-    # },
-    # {
-    #     "name": "Task 5",
-    #     "time": 2,
-    #     "difficulty": 5,
-    #     "priority": 2,
-    #     "fixed_time": None  # 無固定時間，隨機分配
-    # }
-]
+        :param expression: Mathematical expression as a string, e.g., 'difficulty * time * priority'
+        :param allowed_vars: List of allowed variables, e.g., ['difficulty', 'time', 'priority', 'task_num']
+        :param default_values: Dictionary of default values if a variable is missing in a task.
+        :return: Generated fatigue calculation function.
+        """
 
-import re
+        # If no default values provided, set default mapping
+        if default_values is None:
+            default_values = {
+                'difficulty': 1,
+                'time': 1,
+                'priority': 0,
+                'task_num': 1
+            }
+
+        # Extract variables used in the expression
+        tokens = re.findall(r'\b[A-Za-z_]\w*\b', expression)
+        for token in tokens:
+            if token not in allowed_vars:
+                raise ValueError(f"數學式子中包含無效或未允許的變數: {token}")
+
+        # Return a function that calculates fatigue based on the expression
+        def fatigue_function(task):
+            # Build the evaluation context
+            eval_dict = {}
+            for var in allowed_vars:
+                eval_dict[var] = task.get(var, default_values.get(var, 1))
+            return eval(expression, {}, eval_dict)
+
+        return fatigue_function
 
 
-def generate_fatigue_function(expression):
-    """
-    根據用戶輸入的數學式子生成一個疲勞計算函數。
-
-    :param expression: 用戶輸入的數學式子，如 'difficulty * time * priority'
-    :return: 生成的計算疲勞值的函數
-    """
-
-    # 檢查式子是否包含允許的變數
-    valid_vars = ['difficulty', 'time', 'priority', 'task_num']
-    pattern = r'\b(?:' + '|'.join(valid_vars) + r')\b'
-    if not all(re.search(pattern, expr) for expr in expression.split('*')):
-        raise ValueError("數學式子中包含無效變數，僅允許 difficulty, time, priority, task_num。")
-
-    # 返回一個可以執行計算的函數
-    def fatigue_function(task):
-        # 使用 eval 來計算疲勞值，根據用戶輸入的表達式
-        task_num = 1  # 默認的任務數量
-        return eval(expression, {}, {
-            'difficulty': task.get("difficulty", 1),
-            'time': task.get("time", 1),
-            'priority': task.get("priority", 0),
-            'task_num': task_num
-        })
-
-    return fatigue_function
-
-
-# 範例使用
 if __name__ == "__main__":
-    # 讓使用者輸入數學式子
-    user_expression = input("請輸入疲勞計算公式（例如 'difficulty * time * priority'）：")
+    # User-specified allowed variables
+    user_allowed_vars = ['difficulty', 'time', 'priority', 'task_num']
+    # User-provided fatigue calculation expression
+    # user_expression = "difficulty * time"  # Modify as needed
+    user_expression = "difficulty * time / priority"
 
-    # 生成自定義的疲勞計算函數
-    fatigue_function = generate_fatigue_function(user_expression)
+    # Generate the fatigue calculation function
+    fatigue_function = Scheduler.generate_fatigue_function(user_expression, user_allowed_vars)
 
-    # 範例任務
-    task = {
-        "name": "Task 1",
-        "difficulty": 3,
-        "time": 2,
-        "priority": 1,
-        "task_num": 2
-    }
+    # Define tasks
+    tasks = [
+        {
+            "name": "Task 1",
+            "time": 2,  # Duration 2 hours
+            "difficulty": 4,
+            "priority": 1,
+            "fixed_time": None  # No fixed time, assign randomly
+        },
+        {
+            "name": "Task 2",
+            "time": 1,  # Duration 1 hour
+            "difficulty": 6,
+            "priority": 2,
+            "fixed_time": None  # No fixed time, assign randomly
+        },
+        {
+            "name": "Task 3",
+            "time": 4,  # Duration 4 hours
+            "difficulty": 4,
+            "priority": 3,
+            "fixed_time": None  # No fixed time, assign randomly
+        },
+        {
+            "name": "Task 4",
+            "time": 2,  # Duration 2 hours
+            "difficulty": 4,
+            "priority": 4,
+            "fixed_time": ("Sunday", 9, 0)  # Fixed time
+        },
+        {
+            "name": "Task 5",
+            "time": 4,  # Duration 4 hours
+            "difficulty": 1,
+            "priority": 6,
+            "fixed_time": None  # No fixed time, assign randomly
+        },
+    ]
 
-    # 使用自定義的疲勞計算函數計算疲勞值
-    fatigue_value = fatigue_function(task)
-    print(f"計算出的疲勞值: {fatigue_value}")
+    # Initialize the scheduler with the custom fatigue function
+    scheduler = Scheduler(fatigue_calculation=fatigue_function)
+    scheduler.add_tasks(tasks)
+
+    # Minimize total fatigue
+    best_schedule, min_fatigue = scheduler.minimize_total_fatigue()
+
+    # Print the minimum fatigue value
+    print("最小疲勞值:", min_fatigue)
+
+    # Generate and print the final schedule list
+    final_list = scheduler.generate_schedule_list(best_schedule)
+    for day_idx, day_name in enumerate(scheduler.days):
+        print(day_name, final_list[day_idx])

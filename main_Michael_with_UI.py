@@ -1,18 +1,19 @@
+# scheduler_pyside6.py
 import sys
 import os
 import json
 import copy
 import csv
 from datetime import datetime, timedelta
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QDialog, QFormLayout, QDialogButtonBox,
     QSpinBox, QComboBox, QTableWidget, QTableWidgetItem, QMessageBox,
     QTimeEdit, QHeaderView, QScrollArea, QFrame, QSpacerItem, QSizePolicy,
     QStackedWidget
 )
-from PyQt5.QtCore import Qt, QMimeData, QTime, QThread, pyqtSignal
-from PyQt5.QtGui import QDrag, QPixmap, QPainter
+from PySide6.QtCore import Qt, QMimeData, QTime, QThread, Signal
+from PySide6.QtGui import QDrag, QPixmap, QPainter
 
 # Constants
 SETTINGS_FILE = "settings.json"
@@ -43,8 +44,7 @@ class Scheduler:
         self.days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         self.num_intervals_per_day = int((self.end_time - self.start_time) * 60 / self.interval_minutes)
         # Initialize schedule with None
-        self.schedule = [[None for _ in range(self.num_intervals_per_day)] for _ in
-                         range(7)]  # 0: Monday, ..., 6: Sunday
+        self.schedule = [[None for _ in range(self.num_intervals_per_day)] for _ in range(7)]  # 0: Monday, ..., 6: Sunday
         self.tasks = []
         self.task_dict = {}  # 用於加速任務查找
         self.fatigue_calculation = fatigue_calculation or self.default_fatigue_calculation
@@ -53,12 +53,18 @@ class Scheduler:
 
     def default_fatigue_calculation(self, task):
         """
-        默認的疲勞計算方式：difficulty * time
+        默認的疲勞計算方式：difficulty * time + sum of numeric tags
 
         :param task: 任務字典
         :return: 計算出的疲勞值
         """
-        return task.get("difficulty", 1) * task.get("time", 1)
+        base = task.get("difficulty", 1) * task.get("time", 1)
+        tag_sum = 0
+        for key, value in task.items():
+            if key not in ["name", "difficulty", "time", "priority", "fixed_time", "dependencies"]:
+                if isinstance(value, (int, float)):
+                    tag_sum += value
+        return base + tag_sum
 
     def calculate_fatigue(self, schedule):
         total_fatigue = 0
@@ -91,20 +97,17 @@ class Scheduler:
             if task.get("fixed_time"):
                 day, start_hour, start_minute = task["fixed_time"]
                 day_index = self.days.index(day)
-                start_slot = int((start_hour - self.start_time) * (
-                            60 // self.interval_minutes) + start_minute / self.interval_minutes)
+                start_slot = int((start_hour - self.start_time) * (60 // self.interval_minutes) + start_minute / self.interval_minutes)
                 if 0 <= start_slot <= self.num_intervals_per_day - num_slots:
                     # 檢查是否有空閒
-                    if all(temp_schedule[day_index][slot] is None for slot in
-                           range(start_slot, start_slot + num_slots)):
+                    if all(temp_schedule[day_index][slot] is None for slot in range(start_slot, start_slot + num_slots)):
                         for slot in range(start_slot, start_slot + num_slots):
                             temp_schedule[day_index][slot] = task
                         assigned = True
             else:
                 for day_index in range(7):
                     for start_slot in range(self.num_intervals_per_day - num_slots + 1):
-                        if all(temp_schedule[day_index][slot] is None for slot in
-                               range(start_slot, start_slot + num_slots)):
+                        if all(temp_schedule[day_index][slot] is None for slot in range(start_slot, start_slot + num_slots)):
                             for slot in range(start_slot, start_slot + num_slots):
                                 temp_schedule[day_index][slot] = task
                             assigned = True
@@ -116,6 +119,7 @@ class Scheduler:
                 print(f"未能分配任務: {task['name']}")
 
         self.best_schedule = temp_schedule
+        self.schedule = temp_schedule  # 更新主排程
         self.min_fatigue = self.calculate_fatigue(temp_schedule)
         return self.best_schedule, self.min_fatigue
 
@@ -143,8 +147,8 @@ class Scheduler:
 
 
 class OptimizeThread(QThread):
-    optimization_finished = pyqtSignal(list, float)
-    optimization_failed = pyqtSignal(str)
+    optimization_finished = Signal(list, float)
+    optimization_failed = Signal(str)
 
     def __init__(self, scheduler):
         super().__init__()
@@ -521,21 +525,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
-        # Define the custom fatigue calculation function
-        def custom_fatigue_calculation(task):
-            """
-            自定義疲勞計算方式：difficulty * spend_time * priority
+        # Load tags from file
+        self.tags = self.load_tags_from_file()
 
-            :param task: 任務字典
-            :return: 計算出的疲勞值
-            """
-            difficulty = task.get("difficulty", 1)
-            spend_time = task.get("time", 1)
-            priority = task.get("priority", 1)  # 假設 priority 預設為1
-            return difficulty * spend_time * priority
+        # Generate fatigue calculation function based on tags
+        self.fatigue_function = self.generate_fatigue_function(self.tags)
 
         # Initialize Scheduler with the custom fatigue calculation function
-        self.scheduler = Scheduler(fatigue_calculation=custom_fatigue_calculation)
+        self.scheduler = Scheduler(fatigue_calculation=self.fatigue_function)
 
         # Weekly schedule
         self.schedule_widget = ScheduleWidget(self.scheduler)
@@ -580,6 +577,42 @@ class MainWindow(QMainWindow):
 
         # Initialize OptimizeThread
         self.optimize_thread = None
+
+    def load_tags_from_file(self):
+        """Load tags from tagset.csv and return as list of dicts."""
+        tags = []
+        if os.path.exists(TAGSET_FILE):
+            with open(TAGSET_FILE, mode='r', newline='', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    tags.append({
+                        "name": row["name"],
+                        "type": row["type"],
+                        # Add other fields if needed
+                    })
+        return tags
+
+    def generate_fatigue_function(self, tags):
+        """
+        Generate a fatigue calculation function based on the tags.
+
+        :param tags: List of tag dictionaries with "name" and "type".
+        :return: Function to calculate fatigue.
+        """
+        numeric_tags = [tag["name"] for tag in tags if tag["type"] in ["int", "float"]]
+
+        def fatigue_function(task):
+            """
+            自定義疲勞計算方式：difficulty * time * priority + sum of numeric tags
+
+            :param task: 任務字典
+            :return: 計算出的疲勞值
+            """
+            base = task.get("difficulty", 1) * task.get("time", 1) * task.get("priority", 1)
+            tag_sum = sum(task.get(tag, 0) for tag in numeric_tags)
+            return base + tag_sum
+
+        return fatigue_function
 
     def save_settings(self):
         """Save the current settings (start time, end time, time interval) to a JSON file."""
@@ -638,6 +671,8 @@ class MainWindow(QMainWindow):
 
     def load_tags_data(self):
         """Load tags data from the CSV and display it in the table."""
+        self.tags_table.setRowCount(0)  # Clear existing data
+
         if not os.path.exists(TAGSET_FILE):
             # If the file doesn't exist, create it with headers
             with open(TAGSET_FILE, mode='w', newline='', encoding='utf-8') as file:
@@ -753,6 +788,13 @@ class MainWindow(QMainWindow):
                         item = self.tags_table.item(row, column)
                         row_data.append(item.text() if item else "")
                 writer.writerow(row_data)
+
+        # Reload tags and update fatigue function
+        self.tags = self.load_tags_from_file()
+        self.fatigue_function = self.generate_fatigue_function(self.tags)
+        self.scheduler.fatigue_calculation = self.fatigue_function  # Update Scheduler's fatigue calculation
+
+        QMessageBox.information(self, "Success", "Tags saved successfully and fatigue calculation updated.")
 
     def create_tasks_page(self):
         """
@@ -927,8 +969,10 @@ class MainWindow(QMainWindow):
         self.optimize_thread.optimization_failed.connect(self.on_optimization_failed)
         self.optimize_thread.start()
 
-    def on_optimization_finished(self, schedule_list, min_fatigue):
+    def on_optimization_finished(self, schedule, min_fatigue):
         """Handle the completion of the optimization."""
+        # Convert schedule to schedule_list
+        schedule_list = self.scheduler.generate_schedule_list()
         self.schedule_widget.update_schedule_display(schedule_list, min_fatigue)
         QMessageBox.information(self, "Optimization Complete", f"Minimum Fatigue: {min_fatigue}")
         self.optimize_button.setEnabled(True)
@@ -1093,12 +1137,16 @@ class MainWindow(QMainWindow):
         # Adjust the table sizes after updating
         self.schedule_widget.adjust_table_sizes()
 
+        # Optionally, you might want to re-run the optimization after updating settings
+        # Uncomment the following line if desired
+        # self.optimize_schedule()
+
 
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

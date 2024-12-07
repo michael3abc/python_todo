@@ -2,24 +2,20 @@
     {
         "id": 1,
         "name": "a",
-        "timestamp": 1733370633,
+        "timestamp": 1733546947,
         "data": {
             "name": "a",
             "difficulty": 4,
             "time": 4,
             "priority": 1,
-            "fixed_time": [
-                "Friday",
-                9,
-                0
-            ],
+            "fixed_time": null,
             "dependencies": []
         }
     },
     {
         "id": 2,
         "name": "b",
-        "timestamp": 1733370665,
+        "timestamp": 1733546972,
         "data": {
             "name": "b",
             "difficulty": 4,
@@ -32,11 +28,11 @@
     {
         "id": 3,
         "name": "c",
-        "timestamp": 1733371219,
+        "timestamp": 1733546986,
         "data": {
             "name": "c",
-            "difficulty": 1,
-            "time": 1,
+            "difficulty": 4,
+            "time": 4,
             "priority": 1,
             "fixed_time": null,
             "dependencies": []
