@@ -274,66 +274,144 @@ class Scheduler:
         return fatigue_function
 
 
-if __name__ == "__main__":
-    # User-specified allowed variables
-    user_allowed_vars = ['difficulty', 'time', 'priority', 'task_num']
-    # User-provided fatigue calculation expression
-    # user_expression = "difficulty * time"  # Modify as needed
-    user_expression = "difficulty * time / priority"
+import copy
+import numpy as np
+import re
+from functools import lru_cache
 
-    # Generate the fatigue calculation function
+
+# 假設 Scheduler 類別已經定義並可用
+
+# 定義 Scheduler 類別（省略，假設已存在）
+
+# 定義轉換函數
+def convert_tasklist(tasklist):
+    tasks = []
+    for task in tasklist:
+        _, name, _, attributes = task
+
+        # 提取並轉換所需的屬性
+        task_name = name.capitalize().replace('_', ' ')  # 將名稱格式化為首字母大寫並替換底線為空格
+        time = attributes.get('spent time', 1)  # 默認持續時間為1小時
+        difficulty = attributes.get('_difficulty', 1)  # 默認難度為1
+        waiting = attributes.get('waiting', 0)  # 默認等待為0
+        priority = waiting if waiting is not None else 0  # 將等待轉換為優先級，None則設為0
+
+        # 處理固定時間（假設tasklist中沒有固定時間，則設為None）
+        fixed_time = attributes.get('fixed_time', None)
+
+        # 創建 Scheduler 所需的任務字典
+        scheduler_task = {
+            "name": task_name,
+            "time": time,
+            "difficulty": difficulty,
+            "priority": priority,
+            "fixed_time": fixed_time
+        }
+
+        tasks.append(scheduler_task)
+    return tasks
+
+
+# 您的 tasklist
+tasklist = [
+    [1, 'task1', 1733323532, {'_name': 'task1', '_difficulty': 5, '_spent time': 2, '_waiting': None}],
+    [2, 'task2', 1733323532, {'_name': 'task2', '_difficulty': 5, '_spent time': 2, '_waiting': 1}],
+    [3, 'task3', 1733323535, {'_name': 'task3', '_difficulty': 5, '_spent time': 2, '_comments': 'this is too hard', '__waiting': 2}],
+]
+
+# 轉換 tasklist
+tasks = convert_tasklist(tasklist)
+
+# 輸出轉換後的 tasks
+print("轉換後的 tasks 列表:")
+for task in tasks:
+    print(task)
+
+# 初始化 Scheduler 並添加任務
+if __name__ == "__main__":
+    user_allowed_vars = ['difficulty', 'time', 'priority', 'task_num']
+    user_expression = "difficulty * time"
+
+    # 生成疲勞函數
     fatigue_function = Scheduler.generate_fatigue_function(user_expression, user_allowed_vars)
 
-    # Define tasks
-    tasks = [
-        {
-            "name": "Task 1",
-            "time": 2,  # Duration 2 hours
-            "difficulty": 4,
-            "priority": 1,
-            "fixed_time": None  # No fixed time, assign randomly
-        },
-        {
-            "name": "Task 2",
-            "time": 1,  # Duration 1 hour
-            "difficulty": 6,
-            "priority": 2,
-            "fixed_time": None  # No fixed time, assign randomly
-        },
-        {
-            "name": "Task 3",
-            "time": 4,  # Duration 4 hours
-            "difficulty": 4,
-            "priority": 3,
-            "fixed_time": None  # No fixed time, assign randomly
-        },
-        {
-            "name": "Task 4",
-            "time": 2,  # Duration 2 hours
-            "difficulty": 4,
-            "priority": 4,
-            "fixed_time": ("Sunday", 9, 0)  # Fixed time
-        },
-        {
-            "name": "Task 5",
-            "time": 4,  # Duration 4 hours
-            "difficulty": 1,
-            "priority": 6,
-            "fixed_time": None  # No fixed time, assign randomly
-        },
-    ]
-
-    # Initialize the scheduler with the custom fatigue function
+    # 初始化 Scheduler
     scheduler = Scheduler(fatigue_calculation=fatigue_function)
+
+    # 添加轉換後的任務
     scheduler.add_tasks(tasks)
 
-    # Minimize total fatigue
+    # 計算最佳排程
     best_schedule, min_fatigue = scheduler.minimize_total_fatigue()
 
-    # Print the minimum fatigue value
-    print("最小疲勞值:", min_fatigue)
+    print("\n最小疲勞值:", min_fatigue)
 
-    # Generate and print the final schedule list
+    # 生成並打印最終排程
     final_list = scheduler.generate_schedule_list(best_schedule)
     for day_idx, day_name in enumerate(scheduler.days):
         print(day_name, final_list[day_idx])
+
+# if __name__ == "__main__":
+#     # User-specified allowed variables
+#     user_allowed_vars = ['difficulty', 'time', 'priority', 'task_num']
+#     # User-provided fatigue calculation expression
+#     # user_expression = "difficulty * time"  # Modify as needed
+#     user_expression = "difficulty * time"
+#
+#     # Generate the fatigue calculation function
+#     fatigue_function = Scheduler.generate_fatigue_function(user_expression, user_allowed_vars)
+#
+#     # Define tasks
+#     tasks = [
+#         {
+#             "name": "Task 1",
+#             "time": 2,  # Duration 2 hours
+#             "difficulty": 4,
+#             "priority": 1,
+#             "fixed_time": None  # No fixed time, assign randomly
+#         },
+#         {
+#             "name": "Task 2",
+#             "time": 1,  # Duration 1 hour
+#             "difficulty": 6,
+#             "priority": 2,
+#             "fixed_time": None  # No fixed time, assign randomly
+#         },
+#         {
+#             "name": "Task 3",
+#             "time": 4,  # Duration 4 hours
+#             "difficulty": 4,
+#             "priority": 3,
+#             "fixed_time": None  # No fixed time, assign randomly
+#         },
+#         {
+#             "name": "Task 4",
+#             "time": 2,  # Duration 2 hours
+#             "difficulty": 4,
+#             "priority": 4,
+#             "fixed_time": ("Sunday", 9, 0)  # Fixed time
+#         },
+#         {
+#             "name": "Task 5",
+#             "time": 4,  # Duration 4 hours
+#             "difficulty": 1,
+#             "priority": 6,
+#             "fixed_time": None  # No fixed time, assign randomly
+#         },
+#     ]
+#
+#     # Initialize the scheduler with the custom fatigue function
+#     scheduler = Scheduler(fatigue_calculation=fatigue_function)
+#     scheduler.add_tasks(tasks)
+#
+#     # Minimize total fatigue
+#     best_schedule, min_fatigue = scheduler.minimize_total_fatigue()
+#
+#     # Print the minimum fatigue value
+#     print("最小疲勞值:", min_fatigue)
+#
+#     # Generate and print the final schedule list
+#     final_list = scheduler.generate_schedule_list(best_schedule)
+#     for day_idx, day_name in enumerate(scheduler.days):
+#         print(day_name, final_list[day_idx])

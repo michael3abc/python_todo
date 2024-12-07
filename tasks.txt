@@ -1,12 +1,12 @@
 [
     {
         "id": 1,
-        "name": "a",
-        "timestamp": 1733546947,
+        "name": "t1",
+        "timestamp": 1733568571,
         "data": {
-            "name": "a",
-            "difficulty": 4,
-            "time": 4,
+            "name": "t1",
+            "difficulty": 3,
+            "time": 3,
             "priority": 1,
             "fixed_time": null,
             "dependencies": []
@@ -14,25 +14,12 @@
     },
     {
         "id": 2,
-        "name": "b",
-        "timestamp": 1733546972,
+        "name": "t2",
+        "timestamp": 1733568577,
         "data": {
-            "name": "b",
-            "difficulty": 4,
-            "time": 4,
-            "priority": 1,
-            "fixed_time": null,
-            "dependencies": []
-        }
-    },
-    {
-        "id": 3,
-        "name": "c",
-        "timestamp": 1733546986,
-        "data": {
-            "name": "c",
-            "difficulty": 4,
-            "time": 4,
+            "name": "t2",
+            "difficulty": 1,
+            "time": 1,
             "priority": 1,
             "fixed_time": null,
             "dependencies": []

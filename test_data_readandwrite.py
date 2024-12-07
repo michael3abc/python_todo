@@ -1,4 +1,6 @@
 import ast
+import scheduler
+
 test_data=[
     [1, "task1", 1733323532, {"difficulty": 5, "__spent time": 2, "__waiting": None}],
     [2, "task2", 1733323532, {"difficulty": 5, "__spent time": 2, "__waiting": 1}],
@@ -9,6 +11,7 @@ a=[]
 with open("./test_data.txt","w",encoding="utf-8") as file1:
     for i in test_data:
         file1.write(str(i)+",\n")
+        scheduler = scheduler
 
 
 with open("./test_data.txt","r",encoding="utf-8") as file1:
