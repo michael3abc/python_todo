@@ -24,5 +24,22 @@
             "fixed_time": null,
             "dependencies": []
         }
+    },
+    {
+        "id": 3,
+        "name": "A",
+        "timestamp": 1733570985,
+        "data": {
+            "name": "A",
+            "difficulty": 1,
+            "time": 1,
+            "priority": 1,
+            "fixed_time": [
+                "Thursday",
+                9,
+                30
+            ],
+            "dependencies": []
+        }
     }
 ]
